@@ -7,6 +7,7 @@ import time
 from PySide6.QtCore import QObject, QProcess, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from .storage import DATA
+from .model_profiles import GEMMA_CHAT_TEMPLATE
 
 
 class Runtime(QObject):
@@ -22,6 +23,7 @@ class Runtime(QObject):
         self.port, self.key = 0, ""
         self.available = False
         self.devices = []
+        self.profile = "hy-mt"
         self.mode = 'auto'
         self.backend = 'CPU'
         self.loaded_path = None
@@ -35,8 +37,9 @@ class Runtime(QObject):
         self.timer.setInterval(200)
         self.timer.timeout.connect(self.poll)
 
-    def load(self, path):
+    def load(self, path, profile="hy-mt"):
         self.desired = Path(path)
+        self.profile = profile
         self.fallback = False
         self.available = False
         if self.process:
@@ -85,6 +88,10 @@ class Runtime(QObject):
         device = self.devices[0] if self.mode == 'auto' and self.devices and not self.fallback else None
         self.backend = ('GPU · ' + device['name']) if device else 'CPU'
         device_args = ['--device', device['id'], '-ngl', '999', '--fit', 'off'] if device else ['--device', 'none', '-ngl', '0']
+        # llama.cpp strips TranslateGemma's custom language fields from chat messages.
+        # The client renders its text translation instruction; use the Gemma wrapper
+        # also during server startup template probing, rather than its structured template.
+        template_args = ['--chat-template', GEMMA_CHAT_TEMPLATE] if self.profile == 'translategemma' else []
         self.key = secrets.token_urlsafe(32)
         proc = QProcess(self)
         self.process = proc
@@ -96,7 +103,7 @@ class Runtime(QObject):
         proc.setArguments(["-m", "niri_translate.runtime_child", str(binary), "-m", str(self.desired),
                            "--host", "127.0.0.1", "--port", str(self.port), *device_args,
                            "-t", str(min(8, os.cpu_count() or 4)), "-c", "8192", "-np", "1",
-                           "--jinja", "--no-context-shift", "--no-webui", "--offline",
+                           "--jinja", *template_args, "--no-context-shift", "--no-webui", "--offline",
                            "--log-disable", "--api-key", self.key])
         self.desired = None
         self.started_at = time.monotonic()

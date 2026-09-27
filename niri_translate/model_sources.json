@@ -1,0 +1,35 @@
+[
+  {
+    "repo": "tencent/Hy-MT2-1.8B-GGUF",
+    "name": "Hy-MT2-1.8B",
+    "family": "Hy-MT",
+    "kind": "translation",
+    "description": "翻译专用 · 日常中英文翻译",
+    "publisher": "官方",
+    "profile": "hy-mt",
+    "preferred_quant": "Q4_K_M",
+    "lightweight": true
+  },
+  {
+    "repo": "bullerwins/translategemma-4b-it-GGUF",
+    "name": "TranslateGemma 4B",
+    "family": "TranslateGemma",
+    "kind": "translation",
+    "description": "翻译专用 · Google TranslateGemma 4B · 中英文翻译",
+    "publisher": "社区量化 · bullerwins",
+    "profile": "translategemma",
+    "preferred_quant": "Q4_K_M",
+    "lightweight": true
+  },
+  {
+    "repo": "tencent/Hy-MT2-7B-GGUF",
+    "name": "Hy-MT2-7B",
+    "family": "Hy-MT",
+    "kind": "translation",
+    "description": "翻译专用 · 更大模型，内存需求更高",
+    "publisher": "官方",
+    "profile": "hy-mt",
+    "preferred_quant": "Q4_K_M",
+    "lightweight": false
+  }
+]

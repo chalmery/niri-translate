@@ -13,4 +13,4 @@ dependencies = ["PySide6==6.11.2"]
 niri-translate = "niri_translate.app:main"
 
 [tool.setuptools.package-data]
-niri_translate = ["models.json", "assets/*.svg", "ui/*.qml"]
+niri_translate = ["models.json", "model_sources.json", "assets/*.svg", "ui/*.qml"]

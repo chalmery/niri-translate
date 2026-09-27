@@ -18,13 +18,15 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 from .desktop import autostart_path, set_autostart
 from .download import download
+from .catalog import fetch_catalog, load_catalog, merge_catalog, save_catalog
 from .inference import LocalClient, translate
 from .jobs import Job
 from .runtime import Runtime
 from .hardware import probe_devices
 from .theme import ThemeWatcher
-from .storage import (APP_ID, CONFIG, DATA, MODELS, ROOT, STATE, atomic_json,
-                      identify_local, model_path, model_directory, model_inventory, settings, verify)
+from .storage import (APP_ID, CONFIG, DATA, ROOT, STATE, atomic_json,
+                      default_model_directory, identify_local, model_path, model_directory,
+                      model_inventory, settings, verify)
 
 
 def runtime_directory():
@@ -38,20 +40,26 @@ class Controller(QObject):
     def __init__(self, runtime_dir, background=False, launch_ui=True):
         super().__init__()
         self.config = settings()
+        self.models, catalog_updated, catalog_status = load_catalog()
+        self.catalog_job = None
         # Migrate the former single external path without losing it on model switches.
         self.config.setdefault('local_paths', {})
         if self.config.get('local_path') and self.config.get('model'):
             self.config['local_paths'].setdefault(self.config['model'], self.config.pop('local_path'))
-        index = next((i for i,m in enumerate(MODELS) if m['id'] == self.config.get('model')), 0)
+        index = next((i for i,m in enumerate(self.models) if m['id'] == self.config.get('model')), 0)
+        if self.config.get('model') and self.config['model'] != self.models[index]['id']:
+            catalog_status = '此前选择的模型已移出翻译模型库，已切回默认翻译模型'
         self.state = dict(open=not background, settings=False, source='', output='',
                           direction=self.config.get('direction', 0) % 2, model=index,
                           width=max(640, min(int(self.config.get('drawer_width', 820)), 1200)),
                           status='内容仅在本机处理 · 不保存历史', model_status='准备模型…',
                           ready=False, input_error=False, translating=False, model_busy=False, progress=0,
                           autostart=autostart_path().exists(), quitting=False,
-                          models=model_inventory(self.config), models_dir=str(model_directory(self.config)),
+                          models=model_inventory(self.config, self.models), models_dir=str(model_directory(self.config)),
                           models_dir_url=QUrl.fromLocalFile(str(model_directory(self.config))).toString(),
-                          default_models_dir=str(DATA / 'models'), storage_status='', storage_error=False, storage_revision=0,
+                          catalog_busy=False, catalog_error=False, catalog_updated=catalog_updated, catalog_status=catalog_status,
+                          default_models_dir=str(default_model_directory()), models_dir_default=not bool(self.config.get('models_dir')),
+                          storage_status='', storage_error=False, storage_revision=0,
                           hardware_busy=True, hardware_detail='正在检测可用计算设备…', devices=[],
                           acceleration='cpu' if self.config.get('acceleration') == 'cpu' else 'auto', backend='尚未加载', loading=False)
         self.theme = ThemeWatcher(self)
@@ -115,7 +123,7 @@ class Controller(QObject):
         self.launch_job(job)
 
     def refresh_models(self):
-        inventory = model_inventory(self.config)
+        inventory = model_inventory(self.config, self.models)
         for model in inventory:
             path = Path(model['path'])
             try:
@@ -128,21 +136,73 @@ class Controller(QObject):
             self.state['models'] = inventory
             self.changed()
 
+    def refresh_catalog(self):
+        if self.catalog_job or self.quitting:
+            return
+        job = Job(lambda job: fetch_catalog(job.cancelled, job.message.emit), self)
+        self.catalog_job = job
+        self.state.update(catalog_busy=True, catalog_error=False, catalog_status='正在连接 Hugging Face 模型目录…')
+        def message(text):
+            if not self.quitting:
+                self.state['catalog_status'] = text
+                self.changed()
+        def completed(result):
+            if self.quitting:
+                return
+            selected = self.models[self.state['model']]['id']
+            try:
+                models = merge_catalog(self.models, result['models'])
+                save_catalog(models, result['updated_at'])
+            except (OSError, ValueError) as exc:
+                failed(str(exc) if isinstance(exc, ValueError) else '无法保存模型目录缓存，原列表已保留；请检查数据目录权限')
+                return
+            added = len(models) - len(self.models)
+            self.models = models
+            self.state['model'] = next(i for i, model in enumerate(models) if model['id'] == selected)
+            failures = result['failures']
+            detail = f"已更新 {result['completed']} 个仓库，新增 {added} 个选项；现有下载不受影响"
+            if failures:
+                detail += '。以下来源未更新，已保留缓存：' + '；'.join(failures)
+            self.state.update(catalog_updated=result['updated_at'], catalog_status=detail, catalog_error=bool(failures))
+            self.refresh_models()
+            self.changed()
+        def failed(error):
+            if not self.quitting:
+                self.state.update(catalog_error=True, catalog_status=error + '；本地模型仍可使用')
+                self.changed()
+        job.message.connect(message)
+        job.result.connect(completed)
+        job.failed.connect(failed)
+        self.launch_job(job)
+        self.changed()
+
+    def model_index(self, value):
+        # Stable IDs survive filtering and catalog refreshes; retain numeric IPC compatibility.
+        if isinstance(value, str):
+            return next((i for i, model in enumerate(self.models) if model['id'] == value), -1)
+        if type(value) is int and 0 <= value < len(self.models):
+            return value
+        return -1
+
     def set_models_directory(self, value):
         if self.model_job or self.runtime.loading or self.state['hardware_busy']:
             self.state.update(storage_error=True, storage_status='请等待下载、校验或模型加载完成后再更改目录')
             return
-        if not isinstance(value, str) or not value.strip():
+        use_default = value is None
+        if not use_default and (not isinstance(value, str) or not value.strip()):
             self.state.update(storage_error=True, storage_status='请输入模型存储目录的绝对路径')
             return
-        url = QUrl(value.strip())
         try:
-            directory = Path(url.toLocalFile() if url.isLocalFile() else value.strip()).expanduser()
+            if use_default:
+                directory = default_model_directory()
+            else:
+                url = QUrl(value.strip())
+                directory = Path(url.toLocalFile() if url.isLocalFile() else value.strip()).expanduser()
         except (ValueError, RuntimeError):
             self.state.update(storage_error=True, storage_status='目录路径无效，请检查后重试')
             return
         if not directory.is_absolute():
-            self.state.update(storage_error=True, storage_status='请填写绝对路径，例如 /home/用户名/Models，或使用 ~/Models')
+            self.state.update(storage_error=True, storage_status='请填写绝对路径、使用 ~/Models，或选择文件夹')
             return
         try:
             directory = directory.resolve()
@@ -150,7 +210,12 @@ class Controller(QObject):
             # Check real write access, including ACLs, without leaving a probe file behind.
             with tempfile.TemporaryFile(dir=directory):
                 pass
-            updated = dict(self.config, models_dir=str(directory))
+            use_default = use_default or directory == default_model_directory().resolve()
+            updated = dict(self.config)
+            if use_default:
+                updated.pop('models_dir', None)
+            else:
+                updated['models_dir'] = str(directory)
             atomic_json(CONFIG / 'settings.json', updated)
         except (OSError, ValueError, RuntimeError):
             self.state.update(storage_error=True, storage_status='无法保存目录：请确认路径有效、目录可写且配置文件可保存；原设置未更改')
@@ -158,8 +223,10 @@ class Controller(QObject):
         self.cancel_model()
         self.config = updated
         self.state.update(models_dir=str(directory), models_dir_url=QUrl.fromLocalFile(str(directory)).toString(),
+                          models_dir_default=use_default,
                           storage_error=False, storage_revision=self.state['storage_revision'] + 1,
-                          storage_status='已保存。新下载将使用此目录；已有文件和未完成的下载保留在原位置。')
+                          storage_status=('已恢复跟随系统默认目录。' if use_default else '已保存自定义目录。')
+                          + '新下载将使用此目录；已有文件和未完成的下载保留在原位置。')
         self.refresh_models()
         self.load_if_present()
 
@@ -286,17 +353,22 @@ class Controller(QObject):
         elif name == 'translate': self.start_translation()
         elif name == 'stop': self.stop_translation()
         elif name == 'copy': QApplication.clipboard().setText(self.state['output'])
-        elif name == 'model' and 0 <= int(value) < len(MODELS): self.select_model(int(value))
+        elif name == 'model' and self.model_index(value) >= 0: self.select_model(self.model_index(value))
         elif name == 'load': self.load_model()
         elif name == 'download': self.download_model()
-        elif name in ('model_download', 'model_load') and 0 <= int(value) < len(MODELS):
-            self.model_action(int(value), 'download' if name == 'model_download' else 'load')
-        elif name == 'open_folder' and 0 <= int(value) < len(MODELS): self.open_model_folder(int(value))
-        elif name == 'copy_path' and 0 <= int(value) < len(MODELS):
-            QApplication.clipboard().setText(self.state['models'][int(value)]['path'])
+        elif name in ('model_download', 'model_load') and self.model_index(value) >= 0:
+            self.model_action(self.model_index(value), 'download' if name == 'model_download' else 'load')
+        elif name == 'open_folder' and self.model_index(value) >= 0: self.open_model_folder(self.model_index(value))
+        elif name == 'copy_path' and self.model_index(value) >= 0:
+            QApplication.clipboard().setText(self.state['models'][self.model_index(value)]['path'])
             self.state['status'] = '已复制模型完整路径'
         elif name == 'refresh_models': self.refresh_models()
+        elif name == 'refresh_catalog': self.refresh_catalog()
+        elif name == 'cancel_catalog' and self.catalog_job: self.catalog_job.cancel()
+        elif name == 'model_source' and self.model_index(value) >= 0:
+            QDesktopServices.openUrl(QUrl('https://huggingface.co/' + self.models[self.model_index(value)]['repo']))
         elif name == 'models_dir': self.set_models_directory(value)
+        elif name == 'reset_models_dir': self.set_models_directory(None)
         elif name == 'open_storage': self.open_storage_folder()
         elif name == 'acceleration' and value in ('auto', 'cpu') and not self.state['hardware_busy']:
             self.state['acceleration'] = self.runtime.mode = value
@@ -313,7 +385,7 @@ class Controller(QObject):
         self.changed()
 
     def save_config(self):
-        self.config.update(model=MODELS[self.state['model']]['id'], direction=self.state['direction'],
+        self.config.update(model=self.models[self.state['model']]['id'], direction=self.state['direction'],
                            drawer_width=self.state['width'], acceleration=self.state['acceleration'])
         try: atomic_json(CONFIG / 'settings.json', self.config)
         except OSError: self.state['status'] = '无法保存设置，请检查配置目录权限'
@@ -354,6 +426,9 @@ class Controller(QObject):
 
     def finish_job(self, job):
         self.jobs.discard(job)
+        if self.catalog_job is job:
+            self.catalog_job = None
+            self.state['catalog_busy'] = False
         if self.model_job is job: self.model_job = None
         if self.translation_job is job: self.translation_job = None
         job.deleteLater()
@@ -379,7 +454,7 @@ class Controller(QObject):
         else: self.load_if_present()
 
     def selected_path(self):
-        model = MODELS[self.state['model']]
+        model = self.models[self.state['model']]
         return Path(self.config['local_paths'].get(model['id']) or model_path(model, self.config))
 
     def load_if_present(self):
@@ -411,7 +486,7 @@ class Controller(QObject):
     def activate_model(self, path):
         self.invalid_files.pop(str(path), None)
         self.refresh_models()
-        self.runtime.load(path)
+        self.runtime.load(path, profile=self.models[self.state['model']].get('profile', 'hy-mt'))
 
     def mark_invalid(self, path, epoch, error):
         if epoch != self.model_epoch or not ('SHA-256' in error or '文件大小不符' in error):
@@ -425,7 +500,7 @@ class Controller(QObject):
 
     def load_model(self):
         if self.model_job or self.quitting or self.state['hardware_busy']: return
-        path, model = self.selected_path(), MODELS[self.state['model']]
+        path, model = self.selected_path(), self.models[self.state['model']]
         if not path.is_file():
             self.set_model_state('未下载 · 请先点击下载或选择本地文件');return
         self.model_task('校验中：正在检查模型完整性…', lambda job: verify(path,model,job.cancelled,job.progress.emit), self.activate_model)
@@ -433,7 +508,7 @@ class Controller(QObject):
         self.model_job.failed.connect(lambda error: self.mark_invalid(path, epoch, error))
 
     def download_model(self):
-        model = MODELS[self.state['model']]
+        model = self.models[self.state['model']]
         target = model_path(model, self.config)
         if target.is_file() and target.stat().st_size == model['size'] and str(target) not in self.invalid_files:
             self.config['local_paths'].pop(model['id'], None);self.save_config();self.load_model();return
@@ -443,10 +518,11 @@ class Controller(QObject):
 
     def choose_local(self, path):
         def done(model):
-            self.state['model'] = MODELS.index(model)
+            self.state['model'] = self.model_index(model['id'])
             self.config['local_paths'][model['id']] = str(path.resolve())
             self.save_config();self.activate_model(path)
-        self.model_task('校验本地文件中…', lambda job: identify_local(path,job.cancelled,job.progress.emit), done)
+        models = list(self.models)
+        self.model_task('校验本地文件中…', lambda job: identify_local(path,job.cancelled,job.progress.emit,models=models), done)
 
     def stop_translation(self):
         self.translation_epoch += 1
@@ -469,9 +545,10 @@ class Controller(QObject):
         self.state.update(output='',status='准备翻译…')
         port,key = self.runtime.port,self.runtime.key
         target = '简体中文' if self.state['direction'] == 0 else '英语'
+        profile = self.models[self.state['model']].get('profile', 'hy-mt')
         started = time.monotonic()
         def work(job):
-            job.client = LocalClient(port,key,job.cancelled)
+            job.client = LocalClient(port,key,job.cancelled,profile=profile)
             return translate(job.client,text,target,job.chunk.emit,job.message.emit)
         job = Job(work,self)
         self.translation_job = job

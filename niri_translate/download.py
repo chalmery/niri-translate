@@ -40,7 +40,7 @@ def download(model, cancel, progress, opener=None, *, target=None):
                         break
                     offset += len(chunk)
                     if offset > model["size"]:
-                        raise ValueError("下载大小超出官方记录")
+                        raise ValueError("下载大小超出目录记录")
                     stream.write(chunk)
                     progress(offset, model["size"])
     if part.stat().st_size < model["size"]:
