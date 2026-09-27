@@ -27,6 +27,7 @@ ShellRoot {
             autostart: false,
             models: []
         })
+    property bool helpExpanded: false
     property string modelQuery: ""
     property string expandedModelId: ""
     property int modelScope: 0
@@ -43,6 +44,7 @@ ShellRoot {
     property bool applying: false
     property bool sourcePending: false
     property string lastSentSource: ""
+    property int contentRevision: 0
     readonly property var theme: data.theme || ({})
     readonly property color surface: theme.surface || "#f3f9fc"
     readonly property color card: theme.card || "#f0f4f7"
@@ -77,7 +79,8 @@ ShellRoot {
         if (channel.connected) {
             channel.write(JSON.stringify({
                 cmd: cmd,
-                value: value
+                value: value,
+                content_revision: contentRevision
             }) + "\n");
             channel.flush();
         }
@@ -87,6 +90,14 @@ ShellRoot {
             const next = JSON.parse(text);
             applying = true;
             data = next;
+            const nextContentRevision = Number(next.content_revision || 0);
+            if (contentRevision !== nextContentRevision) {
+                contentRevision = nextContentRevision;
+                sourcePending = false;
+                lastSentSource = "";
+                // A pending input-method composition must not restore cleared text.
+                Qt.inputMethod.reset();
+            }
             if (savedDirectory !== next.models_dir || directoryRevision !== Number(next.storage_revision || 0)) {
                 directoryRevision = Number(next.storage_revision || 0);
                 savedDirectory = next.models_dir || "";
@@ -274,6 +285,19 @@ ShellRoot {
         selectionColor: shell.accent
         selectedTextColor: shell.accentTextColor
         opacity: enabled ? 1 : 0.5
+        Text {
+            x: field.leftPadding
+            y: field.topPadding
+            width: field.availableWidth
+            height: field.availableHeight
+            text: field.placeholderText
+            textFormat: Text.PlainText
+            color: field.placeholderTextColor
+            font: field.font
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+            visible: field.length === 0 && field.preeditText.length === 0
+        }
         background: Rectangle {
             radius: 8
             color: shell.inputFill
@@ -401,6 +425,11 @@ ShellRoot {
             onActivated: shell.send("hide")
         }
         Shortcut {
+            sequence: "Ctrl+Q"
+            enabled: window.visible
+            onActivated: shell.send("quit")
+        }
+        Shortcut {
             sequence: "Ctrl+Return"
             enabled: window.visible && !shell.data.settings
             onActivated: shell.send("translate")
@@ -490,13 +519,19 @@ ShellRoot {
                         UiLabel {
                             x: 48
                             y: 32
-                            text: shell.data.settings ? "管理模型与桌面偏好" : "Niri Translate · 离线翻译"
+                            text: shell.data.settings ? "界面与模型" : "Niri Translate"
                             color: shell.muted
                             font.pixelSize: 12
                         }
                         Row {
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+                            QuietButton {
+                                visible: !!shell.data.settings
+                                text: shell.helpExpanded ? "收起说明" : "使用说明"
+                                onClicked: shell.helpExpanded = !shell.helpExpanded
+                            }
                             QuietButton {
                                 text: shell.data.settings ? "返回翻译" : "设置"
                                 onClicked: shell.send("settings", !shell.data.settings)
@@ -515,6 +550,8 @@ ShellRoot {
                         Layout.fillWidth: true
                         spacing: 14
                         RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
                             SelectBox {
                                 id: direction
                                 Layout.preferredWidth: 220
@@ -528,6 +565,21 @@ ShellRoot {
                             }
                             Item {
                                 Layout.fillWidth: true
+                            }
+                            ActionButton {
+                                text: "停止"
+                                enabled: !!shell.data.translating
+                                onClicked: shell.send("stop")
+                            }
+                            ActionButton {
+                                id: translateButton
+                                variant: "primary"
+                                Layout.preferredWidth: 148
+                                Layout.preferredHeight: 38
+                                text: "翻译   Ctrl+Enter"
+                                enabled: !!shell.data.ready
+                                Accessible.name: "翻译，Ctrl+Enter"
+                                onClicked: shell.send("translate")
                             }
                         }
                         RowLayout {
@@ -676,26 +728,6 @@ ShellRoot {
                                 }
                             }
                         }
-                        RowLayout {
-                            ActionButton {
-                                id: translateButton
-                                variant: "primary"
-                                Layout.preferredWidth: 170
-                                Layout.preferredHeight: 38
-                                text: "翻译   Ctrl+Enter"
-                                enabled: !!shell.data.ready
-                                Accessible.name: "翻译，Ctrl+Enter"
-                                onClicked: shell.send("translate")
-                            }
-                            ActionButton {
-                                text: "停止"
-                                enabled: !!shell.data.translating
-                                onClicked: shell.send("stop")
-                            }
-                            Item {
-                                Layout.fillWidth: true
-                            }
-                        }
                         UiLabel {
                             // Keep actionable errors and stop notices; omit idle copy and timing details.
                             readonly property string notice: shell.data.status || ""
@@ -712,6 +744,10 @@ ShellRoot {
                     ScrollView {
                         id: settingsScroll
                         visible: !!shell.data.settings
+                        onVisibleChanged: {
+                            if (visible) contentItem.contentY = 0;
+                            else shell.helpExpanded = false;
+                        }
                         Layout.fillHeight: true
                         Layout.fillWidth: true
                         clip: true
@@ -719,60 +755,188 @@ ShellRoot {
                         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                         ColumnLayout {
                             width: settingsScroll.availableWidth
-                            spacing: 16
+                            spacing: 14
+                            Rectangle {
+                                visible: shell.helpExpanded
+                                Layout.fillWidth: true
+                                implicitHeight: helpBody.implicitHeight + 32
+                                radius: 12
+                                color: shell.inputFill
+                                border.width: 1
+                                border.color: shell.outline
+                                ColumnLayout {
+                                    id: helpBody
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                                    spacing: 14
+                                    Repeater {
+                                        model: [
+                                            { title: "打开与收起", detail: "每次打开侧边栏都进入翻译页。点击外部或按 Esc 收起，Ctrl+Q 退出客户端。自动启动仅显示托盘图标。" },
+                                            { title: "内容与宽度", detail: "默认收起时停止翻译并清空内容；开启保留后，内容和任务保留到本次运行结束，不写入磁盘。也可拖动侧栏左边缘调整宽度。" },
+                                            { title: "运行设备", detail: "自动模式优先使用 GPU，不可用或加载失败时回退 CPU。切换模式会重新加载模型。\n当前运行：" + (shell.data.backend || "尚未加载") + "\n" + ((shell.data.devices || []).length ? shell.data.devices.map(d => d.name + " · " + (d.memory_mib / 1024).toFixed(1) + " GiB 显存").join("\n") : (shell.data.hardware_detail || "正在检测…")) },
+                                            { title: "存储位置", detail: "默认跟随当前用户的系统数据目录。更换目录会停止翻译并重新加载模型，已有文件不会搬移。" },
+                                            { title: "模型管理", detail: "常用模型优先展示轻量型号，全部模型还包含其他精度和较大型号。扫描本地检查已有文件，在线更新只刷新列表，点击下载才获取权重。导入本地模型直接使用模型库中匹配的 GGUF 文件，不复制文件。" + (shell.data.catalog_updated ? "\n列表更新于 " + new Date(shell.data.catalog_updated).toLocaleString() : "") }
+                                        ]
+                                        delegate: ColumnLayout {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            spacing: 4
+                                            UiLabel { text: modelData.title; font.weight: Font.DemiBold }
+                                            UiLabel {
+                                                text: modelData.detail
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                color: shell.muted
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             Rectangle {
                                 Layout.fillWidth: true
-                                implicitHeight: computeBody.implicitHeight + 32
+                                implicitHeight: appearanceBody.implicitHeight + 32
+                                radius: 12
+                                color: shell.card
+                                border.width: 1
+                                border.color: shell.outline
+                                ColumnLayout {
+                                    id: appearanceBody
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                                    spacing: 12
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        UiLabel { text: "界面与行为"; font.pixelSize: 15; font.weight: Font.DemiBold; color: shell.ink }
+                                        Item { Layout.fillWidth: true }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Toggle {
+                                            Layout.fillWidth: true
+                                            text: "自动启动"
+                                            checked: !!shell.data.autostart
+                                            onClicked: shell.send("autostart", checked)
+                                        }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Toggle {
+                                            Layout.fillWidth: true
+                                            text: "收起后保留内容"
+                                            checked: !!shell.data.retain_on_hide
+                                            onClicked: shell.send("retain_on_hide", checked)
+                                        }
+                                    }
+                                    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: shell.outline }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        UiLabel { text: "侧栏宽度"; color: shell.ink }
+                                        Item { Layout.fillWidth: true }
+                                        UiLabel { text: shell.data.width + " px"; color: shell.muted; font.pixelSize: 12 }
+                                    }
+                                    T.Slider {
+                                        id: widthSlider
+                                        Layout.fillWidth: true
+                                        implicitHeight: 28
+                                        leftPadding: 8; rightPadding: 8
+                                        from: 640; to: 1200; stepSize: 20
+                                        value: Number(shell.data.width || 820)
+                                        onMoved: shell.send("width", value)
+                                        background: Rectangle {
+                                            x: widthSlider.leftPadding
+                                            y: (widthSlider.height - height) / 2
+                                            width: widthSlider.availableWidth
+                                            height: 4
+                                            radius: 2
+                                            color: shell.pressedFill
+                                            Rectangle { width: parent.width * widthSlider.position; height: 4; radius: 2; color: shell.accent }
+                                        }
+                                        handle: Rectangle {
+                                            x: widthSlider.leftPadding + widthSlider.visualPosition * (widthSlider.availableWidth - width)
+                                            y: (widthSlider.height - height) / 2
+                                            implicitWidth: 16; implicitHeight: 20
+                                            radius: 5
+                                            color: shell.accent
+                                            border.width: widthSlider.visualFocus ? 2 : 0
+                                            border.color: shell.accentTextColor
+                                        }
+                                    }
+                                }
+                            }
+                            UiLabel {
+                                visible: !!shell.data.status && !shell.data.translating
+                                         && shell.data.status !== "内容仅在本机处理 · 不保存历史"
+                                         && !shell.data.status.startsWith("完成 ·")
+                                         && !shell.data.status.startsWith("已复制")
+                                text: shell.data.status || ""
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap; color: shell.muted; font.pixelSize: 12
+                            }
+                            UiLabel { text: "模型"; font.pixelSize: 16; font.weight: Font.DemiBold; color: shell.ink }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: computeBody.implicitHeight + 28
                                 radius: 12
                                 color: shell.card
                                 border.width: 1
                                 border.color: shell.outline
                                 ColumnLayout {
                                     id: computeBody
-                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
                                     spacing: 8
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        UiLabel { text: "计算设备"; font.pixelSize: 16; font.weight: Font.DemiBold; color: shell.ink }
+                                        UiLabel { text: "运行设备"; color: shell.ink }
                                         Item { Layout.fillWidth: true }
                                         SelectBox {
-                                            Layout.preferredWidth: 220
-                                            model: ["自动 · 优先使用 GPU", "仅使用 CPU"]
+                                            Layout.preferredWidth: 170
+                                            model: ["自动", "仅 CPU"]
                                             currentIndex: shell.data.acceleration === "cpu" ? 1 : 0
-                                            enabled: !shell.data.hardware_busy && !shell.data.model_busy
+                                            enabled: !shell.data.hardware_busy && !shell.data.model_busy && !shell.data.loading
                                             onActivated: index => shell.send("acceleration", index === 1 ? "cpu" : "auto")
                                         }
                                     }
-                                    UiLabel {
+                                    RowLayout {
                                         Layout.fillWidth: true
-                                        text: (shell.data.devices || []).length ? shell.data.devices.map(d => d.name + " · " + (d.memory_mib / 1024).toFixed(1) + " GiB 显存").join("\n") : (shell.data.hardware_detail || "正在检测…")
-                                        wrapMode: Text.WrapAnywhere
-                                        color: shell.ink
+                                        UiLabel {
+                                            Layout.fillWidth: true
+                                            text: (shell.data.models[shell.data.model] || {}).name || "尚未选择模型"
+                                            elide: Text.ElideRight; color: shell.muted; font.pixelSize: 12
+                                        }
+                                        UiLabel {
+                                            text: shell.data.ready ? ((shell.data.backend || "").startsWith("GPU") ? "GPU 加速" : "CPU 运行") : shell.data.loading ? "加载中…" : "未就绪"
+                                            color: shell.data.ready ? shell.accent : shell.muted; font.pixelSize: 12
+                                        }
                                     }
                                     UiLabel {
+                                        visible: !shell.data.ready && !!shell.data.model_status
                                         Layout.fillWidth: true
-                                        text: "当前运行：" + (shell.data.backend || "尚未加载") + "\n自动模式在 GPU 不可用或加载失败时回退 CPU；切换模式会重新加载模型。"
-                                        color: shell.muted; wrapMode: Text.WordWrap; font.pixelSize: 12
+                                        text: shell.data.model_status || ""
+                                        wrapMode: Text.WordWrap; color: shell.muted; font.pixelSize: 12
                                     }
                                 }
                             }
                             Rectangle {
                                 Layout.fillWidth: true
-                                implicitHeight: storageBody.implicitHeight + 32
+                                implicitHeight: storageBody.implicitHeight + 28
                                 radius: 12
                                 color: shell.card
                                 border.width: 1
                                 border.color: shell.outline
                                 ColumnLayout {
                                     id: storageBody
-                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
-                                    spacing: 8
-                                    UiLabel { text: "模型存储位置"; font.pixelSize: 16; font.weight: Font.DemiBold; color: shell.ink }
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                                    spacing: 10
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        UiLabel { text: "存储位置"; color: shell.ink }
+                                        Item { Layout.fillWidth: true }
+                                        UiLabel { text: shell.data.models_dir_default ? "系统默认" : "自定义"; color: shell.muted; font.pixelSize: 12 }
+                                    }
                                     PathField {
                                         id: directoryInput
                                         Layout.fillWidth: true
                                         text: shell.directoryDraft
-                                        placeholderText: "填写绝对路径，或点击选择文件夹"
+                                        placeholderText: "选择模型文件夹"
                                         selectByMouse: true
                                         enabled: !shell.data.model_busy && !shell.data.loading && !shell.data.hardware_busy
                                         onTextEdited: shell.directoryDraft = text
@@ -782,7 +946,8 @@ ShellRoot {
                                         Layout.fillWidth: true
                                         spacing: 8
                                         ActionButton {
-                                            text: "选择文件夹…"
+                                            compact: true
+                                            text: "选择文件夹"
                                             enabled: directoryInput.enabled
                                             onClicked: {
                                                 folderPicker.currentFolder = shell.data.models_dir_url || "";
@@ -790,12 +955,12 @@ ShellRoot {
                                             }
                                         }
                                         ActionButton {
-                                            variant: "primary"
-                                            text: "应用目录"
+                                            compact: true; variant: "primary"
+                                            text: "应用"
                                             enabled: directoryInput.enabled && shell.directoryDraft.trim().length > 0 && shell.directoryDraft !== shell.savedDirectory
                                             onClicked: shell.send("models_dir", shell.directoryDraft)
                                         }
-                                        QuietButton { text: "打开当前目录"; onClicked: shell.send("open_storage") }
+                                        QuietButton { text: "打开目录"; onClicked: shell.send("open_storage") }
                                         QuietButton {
                                             text: "恢复默认"
                                             enabled: directoryInput.enabled && (!shell.data.models_dir_default || shell.directoryDraft !== shell.savedDirectory)
@@ -803,30 +968,20 @@ ShellRoot {
                                         }
                                     }
                                     UiLabel {
-                                        Layout.fillWidth: true
-                                        text: (shell.data.models_dir_default ? "跟随系统默认：" : "自定义目录：") + (shell.data.models_dir || "")
-                                        color: shell.muted; font.pixelSize: 12; wrapMode: Text.WrapAnywhere
-                                    }
-                                    UiLabel {
-                                        Layout.fillWidth: true
-                                        text: "默认目录由当前用户的系统数据目录决定。应用目录或恢复默认会重新加载模型，中断当前翻译；已有模型和下载片段不会搬移。"
-                                        color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
-                                    }
-                                    UiLabel {
-                                        visible: !!shell.data.storage_status
+                                        visible: !!shell.data.storage_error
                                         Layout.fillWidth: true
                                         text: shell.data.storage_status || ""
-                                        color: shell.data.storage_error ? (shell.theme.error || shell.muted) : shell.accent
-                                        font.pixelSize: 12; wrapMode: Text.WordWrap
+                                        color: shell.errorColor; font.pixelSize: 12; wrapMode: Text.WordWrap
                                     }
                                 }
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                UiLabel { text: "翻译模型库"; font.pixelSize: 16; font.weight: Font.DemiBold; color: shell.ink }
+                                UiLabel { text: "模型列表"; font.pixelSize: 15; font.weight: Font.DemiBold; color: shell.ink }
                                 Item { Layout.fillWidth: true }
                                 QuietButton { text: "扫描本地"; onClicked: shell.send("refresh_models") }
                                 ActionButton {
+                                    compact: true
                                     text: shell.data.catalog_busy ? "更新中…" : "在线更新"
                                     enabled: !shell.data.catalog_busy
                                     onClicked: shell.send("refresh_catalog")
@@ -838,7 +993,7 @@ ShellRoot {
                                 spacing: 10
                                 PathField {
                                     Layout.fillWidth: true
-                                    placeholderText: "搜索翻译模型或量化，例如 1.8B / 4B / Q4"
+                                    placeholderText: "搜索模型"
                                     text: shell.modelQuery
                                     onTextEdited: shell.modelQuery = text
                                     selectByMouse: true
@@ -851,21 +1006,17 @@ ShellRoot {
                                 }
                             }
                             UiLabel {
+                                visible: !!shell.data.catalog_error || !!shell.data.catalog_busy
                                 Layout.fillWidth: true
-                                text: "显示 " + shell.visibleModels.length + " / " + shell.data.models.length + " 个选项 · 默认推荐轻量翻译模型。全部模型中可选择较大的 7B；点击下载才会获取权重。"
-                                color: shell.muted; wrapMode: Text.WordWrap; font.pixelSize: 12
-                            }
-                            UiLabel {
-                                Layout.fillWidth: true
-                                text: (shell.data.catalog_status || "") + (shell.data.catalog_updated ? "\n最近更新：" + new Date(shell.data.catalog_updated).toLocaleString() : "")
+                                text: shell.data.catalog_status || ""
                                 color: shell.data.catalog_error ? shell.errorColor : shell.muted
                                 wrapMode: Text.WordWrap; font.pixelSize: 12
                             }
                             UiLabel {
                                 visible: shell.visibleModels.length === 0
                                 Layout.fillWidth: true
-                                text: "没有匹配的模型，可清空搜索或切换到全部模型。"
-                                color: shell.muted; wrapMode: Text.WordWrap
+                                text: "没有匹配的模型"
+                                color: shell.muted
                             }
                             Repeater {
                                 model: shell.visibleModels
@@ -909,13 +1060,13 @@ ShellRoot {
                                         }
                                         UiLabel {
                                             Layout.fillWidth: true
-                                            text: (modelCard.modelData.size / 1e9).toFixed(2) + " GB  ·  " + modelCard.modelData.description + (modelCard.modelData.external ? "  ·  外部文件" : "")
+                                            text: (modelCard.modelData.size / 1e9).toFixed(2) + " GB" + (modelCard.modelData.external ? " · 外部文件" : "")
                                             color: shell.muted; font.pixelSize: 12; elide: Text.ElideRight
                                         }
                                         UiLabel {
                                             visible: modelCard.detailsExpanded
                                             Layout.fillWidth: true
-                                            text: modelCard.modelData.publisher + " · " + modelCard.modelData.repo
+                                            text: modelCard.modelData.description + "\n" + modelCard.modelData.publisher + " · " + modelCard.modelData.repo
                                             color: shell.muted; font.pixelSize: 11; wrapMode: Text.WrapAnywhere
                                         }
                                         TextEdit {
@@ -979,81 +1130,8 @@ ShellRoot {
                                 }
                             }
                             RowLayout {
-                                ActionButton { text: "导入本地 GGUF…"; enabled: !shell.data.model_busy && !shell.data.hardware_busy; onClicked: filePicker.open() }
-                                UiLabel { Layout.fillWidth: true; text: "直接使用原文件，不复制；按模型库中的完整校验值识别。"; color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                            }
-                            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: shell.outline }
-                            UiLabel { text: "桌面与窗口"; font.pixelSize: 16; font.weight: Font.DemiBold; color: shell.ink }
-                            Toggle {
-                                text: "登录后自动启动到托盘"
-                                checked: !!shell.data.autostart
-                                onClicked: shell.send("autostart", checked)
-                            }
-                            UiLabel { text: "抽屉宽度 · " + shell.data.width + " px"; color: shell.muted }
-                            T.Slider {
-                                id: widthSlider
-                                Layout.fillWidth: true
-                                implicitHeight: 28
-                                leftPadding: 8; rightPadding: 8
-                                from: 640; to: 1200; stepSize: 20
-                                value: Number(shell.data.width || 820)
-                                onMoved: shell.send("width", value)
-                                background: Rectangle {
-                                    x: widthSlider.leftPadding
-                                    y: (widthSlider.height - height) / 2
-                                    width: widthSlider.availableWidth
-                                    height: 4
-                                    radius: 2
-                                    color: shell.pressedFill
-                                    Rectangle { width: parent.width * widthSlider.position; height: 4; radius: 2; color: shell.accent }
-                                }
-                                handle: Rectangle {
-                                    x: widthSlider.leftPadding + widthSlider.visualPosition * (widthSlider.availableWidth - width)
-                                    y: (widthSlider.height - height) / 2
-                                    implicitWidth: 16; implicitHeight: 20
-                                    radius: 5
-                                    color: shell.accent
-                                    border.width: widthSlider.visualFocus ? 2 : 0
-                                    border.color: shell.accentTextColor
-                                }
-                            }
-                            UiLabel {
-                                Layout.fillWidth: true
-                                text: "拖动左边缘也可调整宽度。点击外部或按 Esc 收起。\n收起保留文字，退出后清空；不保存翻译历史。"
-                                color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
-                            }
-                            ActionButton { variant: "danger"; text: "退出客户端"; onClicked: shell.send("quit") }
-                            UiLabel {
-                                text: shell.data.status || ""; Layout.fillWidth: true
-                                wrapMode: Text.WordWrap; color: shell.muted; font.pixelSize: 12
-                            }
-                        }
-                    }
-                    Rectangle {
-                        visible: !!shell.data.settings
-                        Layout.fillWidth: true
-                        implicitHeight: footer.implicitHeight + 20
-                        radius: 8
-                        color: shell.selectedFill
-                        border.width: 1
-                        border.color: shell.outline
-                        RowLayout {
-                            id: footer
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 10
-                            Rectangle {
-                                implicitWidth: 7
-                                implicitHeight: 7
-                                radius: 4
-                                color: shell.data.ready ? shell.accent : (shell.theme.error || shell.muted)
-                            }
-                            UiLabel {
-                                Layout.fillWidth: true
-                                text: ((shell.data.models[shell.data.model] || {}).name || "本地模型") + " · " + (shell.data.model_status || "")
-                                wrapMode: Text.WordWrap
-                                color: shell.muted
-                                font.pixelSize: 12
+                                ActionButton { compact: true; text: "导入本地模型"; enabled: !shell.data.model_busy && !shell.data.hardware_busy; onClicked: filePicker.open() }
+                                Item { Layout.fillWidth: true }
                             }
                         }
                     }

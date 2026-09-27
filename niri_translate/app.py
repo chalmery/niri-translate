@@ -51,6 +51,7 @@ class Controller(QObject):
         if self.config.get('model') and self.config['model'] != self.models[index]['id']:
             catalog_status = '此前选择的模型已移出翻译模型库，已切回默认翻译模型'
         self.state = dict(open=not background, settings=False, source='', output='',
+                          retain_on_hide=self.config.get('retain_on_hide') is True, content_revision=0,
                           direction=self.config.get('direction', 0) % 2, model=index,
                           width=max(640, min(int(self.config.get('drawer_width', 820)), 1200)),
                           status='内容仅在本机处理 · 不保存历史', model_status='准备模型…',
@@ -342,13 +343,15 @@ class Controller(QObject):
             return
         name, value = request.get('cmd'), request.get('value')
         if name == 'show': self.reveal()
-        elif name == 'hide':
-            if QSystemTrayIcon.isSystemTrayAvailable(): self.state['open'] = False
-            else: self.state['status'] = '系统托盘不可用，保留抽屉；可在设置底部退出'
+        elif name == 'hide': self.hide()
         elif name == 'toggle': self.toggle()
         elif name == 'settings':
             self.state.update(settings=bool(value), open=True);self.refresh_models()
-        elif name == 'source': self.state.update(source=str(value), input_error=False)
+        elif name == 'source':
+            # Ignore input queued before a clear, including input from another UI connection.
+            revision = request.get('content_revision', self.state['content_revision'])
+            if revision == self.state['content_revision'] and (self.state['open'] or self.state['retain_on_hide']):
+                self.state.update(source=str(value), input_error=False)
         elif name == 'direction':
             self.stop_translation();self.state['direction'] = int(value) % 2;self.save_config()
         elif name == 'translate': self.start_translation()
@@ -380,6 +383,13 @@ class Controller(QObject):
         elif name == 'local': self.choose_local(Path(QUrl(str(value)).toLocalFile() or str(value)))
         elif name == 'autostart':
             set_autostart(bool(value));self.state['autostart'] = autostart_path().exists()
+        elif name == 'retain_on_hide' and type(value) is bool:
+            updated = dict(self.config, retain_on_hide=value)
+            atomic_json(CONFIG / 'settings.json', updated)
+            self.config = updated
+            self.state['retain_on_hide'] = value
+            if not value and not self.state['open']:
+                self.clear_content()
         elif name == 'width':
             self.state['width'] = max(640, min(int(value), 1200));self.save_config()
         elif name == 'quit': self.quit()
@@ -392,8 +402,22 @@ class Controller(QObject):
         except OSError: self.state['status'] = '无法保存设置，请检查配置目录权限'
 
     def reveal(self):
-        self.state['open'] = True
+        self.state.update(open=True, settings=False)
         self.changed()
+
+    def clear_content(self):
+        # Invalidate queued translation signals before clearing either text pane.
+        self.stop_translation()
+        self.state.update(source='', output='', input_error=False, status='',
+                          content_revision=self.state['content_revision'] + 1)
+
+    def hide(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.state['status'] = '系统托盘不可用，保留抽屉；可按 Ctrl+Q 退出'
+            return
+        self.state['open'] = False
+        if not self.state['retain_on_hide']:
+            self.clear_content()
 
     def toggle(self):
         if self.state['open']: self.command({'cmd': 'hide'})
@@ -409,7 +433,7 @@ class Controller(QObject):
         if self.background_start:
             return
         if not self.quitting and not QSystemTrayIcon.isSystemTrayAvailable():
-            self.state.update(open=True, status='系统托盘不可用，保留抽屉；可在设置底部退出')
+            self.state.update(open=True, status='系统托盘不可用，保留抽屉；可按 Ctrl+Q 退出')
             self.changed()
 
     def set_model_state(self, text):

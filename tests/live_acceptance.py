@@ -64,6 +64,7 @@ end=time.monotonic()+15
 while not SOCK.exists() and time.monotonic()<end:time.sleep(.1)
 c=Client()
 backend=pid()
+retain_before=c.state.get('retain_on_hide', False)
 try:
     check('desktop_entry_starts_app',launch.returncode==0 and backend>0)
     c.wait(lambda s:s['ready'])
@@ -80,11 +81,14 @@ try:
         except subprocess.CalledProcessError:continue
         if 'niri-translate' in title:service=bus;break
     check('tray_registered_in_actual_host',service is not None)
+    c.send('settings',True);c.wait(lambda s:s['settings'])
     c.send('hide');c.wait(lambda s:not s['open']);pause_ui()
     check('drawer_really_unmapped',not json.loads(drawer('status'))['visible'])
     run('busctl','--user','call',service,'/StatusNotifierItem','org.kde.StatusNotifierItem','Activate','ii','0','0')
     c.wait(lambda s:s['open']);pause_ui()
-    check('tray_activate_opens_drawer',json.loads(drawer('status'))['visible'])
+    reopened=json.loads(drawer('status'))
+    check('tray_activate_opens_drawer',reopened['visible'])
+    check('reopen_always_returns_to_translation',not reopened['settings'])
     before=children(backend)
     run(str(Path.home()/'.local/bin/niri-translate'))
     check('single_instance_same_pid',pid()==backend)
@@ -95,8 +99,14 @@ try:
     translation=c.state['output'];source=c.state['source']
     check('en_to_zh_real_model',any('\u4e00'<=ch<='\u9fff' for ch in translation))
     pause_ui();drawer('capture',str(ROOT/'docs/screenshot.png'));pause_ui()
+    c.send('retain_on_hide',True);c.wait(lambda s:s['retain_on_hide'])
     c.send('hide');c.wait(lambda s:not s['open']);c.send('show');c.wait(lambda s:s['open'])
-    check('hide_preserves_both_texts',c.state['source']==source and c.state['output']==translation)
+    check('hide_preserves_texts_when_enabled',c.state['source']==source and c.state['output']==translation)
+    c.send('retain_on_hide',False);c.wait(lambda s:not s['retain_on_hide'])
+    c.send('hide');c.wait(lambda s:not s['open']);c.send('show');c.wait(lambda s:s['open'])
+    check('hide_clears_texts_when_disabled',not c.state['source'] and not c.state['output'] and not c.state['translating'])
+    pause_ui();ui=json.loads(drawer('status'))
+    check('drawer_text_panes_are_empty',ui['sourceLength']==0 and ui['outputLength']==0)
     c.send('direction',1);c.send('source','请在明天下午三点之前发送测试报告。');c.send('translate')
     c.wait(lambda s:s['status'].startswith('完成') and s['source'].startswith('请'))
     check('zh_to_en_real_model','report' in c.state['output'].lower())
@@ -136,7 +146,9 @@ try:
     c.send('settings',True);c.wait(lambda s:s['settings']);pause_ui();drawer('capture',str(ROOT/'docs/settings.png'));pause_ui()
 finally:
     owned=children(backend)
-    try:c.send('quit')
+    try:
+        c.send('retain_on_hide',retain_before)
+        c.send('quit')
     except OSError:pass
     c.close()
     end=time.monotonic()+20
