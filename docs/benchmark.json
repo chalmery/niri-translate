@@ -1,0 +1,78 @@
+{
+  "model": "Hy-MT2-1.8B-Q4_K_M.gguf",
+  "runtime_commit": "d2e54583c7452353eb35d40431281f6ee984332f",
+  "threads": 8,
+  "context": 8192,
+  "samples": [
+    {
+      "label": "short-en",
+      "source": "Please close the window before leaving the room.",
+      "target": "简体中文",
+      "chars": 48,
+      "output": "离开房间前请关闭窗口。",
+      "total_s": 0.6855556420000539,
+      "first_output_s": 0.41245542300021043,
+      "chunks": 1,
+      "first_token_s": 0.40136439099978816,
+      "generation_s": 0.6744484030000422
+    },
+    {
+      "label": "short-zh",
+      "source": "你好，我想把会议改到明天下午三点。",
+      "target": "英语",
+      "chars": 17,
+      "output": "Hello, I would like to change the meeting to 3 pm tomorrow.",
+      "total_s": 0.9158216340001673,
+      "first_output_s": 0.340977852999913,
+      "chunks": 1,
+      "first_token_s": 0.3373629709999477,
+      "generation_s": 0.912198940000053
+    },
+    {
+      "label": "email",
+      "source": "王经理您好：\n\n附件是本周的项目进度报告。由于测试环境暂时不可用，发布计划将顺延至下周二。请您在周五前确认是否需要调整。\n\n谢谢！",
+      "target": "英语",
+      "chars": 65,
+      "output": "Dear Manager Wang,\n\nThe attachment is the project progress report for this week. Due to the temporary unavailability of the testing environment, the release schedule will be postponed until next Tuesday. Please confirm whether any adjustments are needed by Friday.\n\nThank you!",
+      "total_s": 2.909205770999961,
+      "first_output_s": 0.3058892009998999,
+      "chunks": 3,
+      "first_token_s": 0.2974197109997476,
+      "generation_s": 2.900724242999786
+    },
+    {
+      "label": "technical",
+      "source": "The client sends requests to 127.0.0.1. Network operations run on a worker thread so the GUI remains responsive. If the server returns HTTP 503, wait until model loading finishes and retry.",
+      "target": "简体中文",
+      "chars": 189,
+      "output": "客户端向 127.0.0.1 发送请求。网络操作在工作线程上执行，因此图形界面仍能保持响应。如果服务器返回 HTTP 503 状态，请等待模型加载完成后再重试。",
+      "total_s": 2.287928894000288,
+      "first_output_s": 0.514104492000115,
+      "chunks": 1,
+      "first_token_s": 0.5110477220000575,
+      "generation_s": 2.284860063999986
+    },
+    {
+      "label": "format",
+      "source": "Deployment checklist:\n\n1. Open https://example.com/api and keep ${TOKEN} unchanged.\n2. Set timeout_ms = 3000; retry at most 3 times.\n\n```python\nprint(\"hello\")\n```",
+      "target": "简体中文",
+      "chars": 162,
+      "output": "部署检查清单：\n\n1. 打开 https://example.com/api，并保持 ${TOKEN} 不变。\n2. 设置 timeout_ms = 3000；最多重试 3 次。\n\n```python\nprint(\"hello\")\n```",
+      "total_s": 2.575272636000136,
+      "first_output_s": 0.30993382700035,
+      "chunks": 3,
+      "first_token_s": 0.30193292500007374,
+      "generation_s": 2.567252972999995
+    }
+  ],
+  "load_s": 1.0058816529999604,
+  "memory": [
+    "VmHWM:\t 2451132 kB",
+    "VmRSS:\t 2451132 kB"
+  ],
+  "props": {
+    "model_alias": "/home/yangcc/.local/share/niri-translate/models/Hy-MT2-1.8B-Q4_K_M.gguf",
+    "chat_template": "{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}<｜hy_begin▁of▁sentence｜>{{ system_message }}<｜hy_place▁holder▁no▁3｜>{% else %}{% set loop_messages = messages %}<｜hy_begin▁of▁sentence｜>{% endif %}{% for message in loop_messages %}{% if message['role'] == 'user' %}<｜hy_User｜>{{ message['content'] }}{% elif message['role'] == 'assistant' %}<｜hy_Assistant｜>{{ message['content'] }}<｜hy_place▁holder▁no▁2｜>{% endif %}{% endfor %}{% if add_generation_prompt %}<｜hy_Assistant｜>{% else %}<｜hy_place▁holder▁no▁8｜>{% endif %}"
+  },
+  "exit_code": 0
+}

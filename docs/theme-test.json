@@ -1,0 +1,48 @@
+{
+  "light": {
+    "connected": true,
+    "visible": true,
+    "open": true,
+    "settings": false,
+    "width": 820,
+    "sourceLength": 0,
+    "outputLength": 0,
+    "ready": true,
+    "dark": false,
+    "surface": "#f3f9fc",
+    "ink": "#171c1f",
+    "accentTextColor": "#ffffff",
+    "namespace": "niri-translate-drawer"
+  },
+  "dark": {
+    "connected": true,
+    "visible": true,
+    "open": true,
+    "settings": false,
+    "width": 820,
+    "sourceLength": 84,
+    "outputLength": 25,
+    "ready": true,
+    "dark": true,
+    "surface": "#101618",
+    "ink": "#dee3e6",
+    "accentTextColor": "#003544",
+    "namespace": "niri-translate-drawer"
+  },
+  "light_again": {
+    "connected": true,
+    "visible": true,
+    "open": true,
+    "settings": false,
+    "width": 820,
+    "sourceLength": 84,
+    "outputLength": 25,
+    "ready": true,
+    "dark": false,
+    "surface": "#f3f9fc",
+    "ink": "#171c1f",
+    "accentTextColor": "#ffffff",
+    "namespace": "niri-translate-drawer"
+  },
+  "desktop_theme_changed": false
+}

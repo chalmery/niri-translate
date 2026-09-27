@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "niri-translate"
+version = "0.1.0"
+description = "Private, CPU-first Chinese-English tray translator for Wayland"
+requires-python = ">=3.11"
+dependencies = ["PySide6==6.11.2"]
+
+[project.scripts]
+niri-translate = "niri_translate.app:main"
+
+[tool.setuptools.package-data]
+niri_translate = ["models.json", "assets/*.svg", "ui/*.qml"]

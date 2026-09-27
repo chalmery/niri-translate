@@ -1,0 +1,17 @@
+{
+  "load_s": 1.008189924999897,
+  "long_input": {
+    "chars": 29600,
+    "input_tokens": 17649,
+    "chunks": 5,
+    "largest_prompt_tokens": 4062,
+    "no_content_lost": true
+  },
+  "real_output_limit_reported": true,
+  "translation": "After the model is downloaded, local translation can be performed even without an internet connection.",
+  "network_interfaces": [
+    "lo"
+  ],
+  "offline_loopback_only": true,
+  "server_reaped": true
+}
