@@ -2,6 +2,22 @@
 
 适用于 Linux / niri / Wayland 的本地中英文翻译客户端。点击系统托盘图标，从屏幕右侧滑出翻译抽屉；使用轻量翻译专用模型，自动检测可用 GPU（Vulkan），不可用或加载失败时回退 CPU。模型下载完成后可离线翻译，原文和译文均留在本机。
 
+## 让 AI 帮你安装
+
+> **[打开 AI 安装指南](docs/INSTALL_FOR_AI.md)** · [原始 Markdown](https://raw.githubusercontent.com/chalmery/niri-translate/main/docs/INSTALL_FOR_AI.md)
+>
+> 将下面整段复制给能操作本机终端的 AI 助手，它就能按你的电脑环境检查依赖、安装并启动。
+
+```text
+请阅读这份安装指南，帮我在当前电脑安装并启动 Niri Translate：
+https://raw.githubusercontent.com/chalmery/niri-translate/main/docs/INSTALL_FOR_AI.md
+
+先检查系统和已有安装，按指南完成安装、下载默认小翻译模型，并启动客户端。
+保留我已有的模型和配置，最后告诉我安装结果以及实际使用的是 GPU 还是 CPU。
+```
+
+想自己安装？查看下方的[安装和启动](#安装和启动)。
+
 <p align="center">
   <img src="docs/screenshot.png" alt="Niri Translate 浅色翻译界面，支持中英文互译和本地 GPU 推理" width="640">
 </p>
