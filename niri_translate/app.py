@@ -39,6 +39,7 @@ def runtime_directory():
 class Controller(QObject):
     def __init__(self, runtime_dir, background=False, launch_ui=True):
         super().__init__()
+        self.background_start = background
         self.config = settings()
         self.models, catalog_updated, catalog_status = load_catalog()
         self.catalog_job = None
@@ -403,6 +404,10 @@ class Controller(QObject):
         self.changed()
 
     def check_tray(self):
+        # At login the tray host can appear after the app. Background launches
+        # stay hidden; QSystemTrayIcon registers when the host becomes available.
+        if self.background_start:
+            return
         if not self.quitting and not QSystemTrayIcon.isSystemTrayAvailable():
             self.state.update(open=True, status='系统托盘不可用，保留抽屉；可在设置底部退出')
             self.changed()
@@ -592,7 +597,7 @@ class Controller(QObject):
 
 def main():
     parser=argparse.ArgumentParser(description='Niri Translate 本地翻译抽屉')
-    parser.add_argument('--background',action='store_true')
+    parser.add_argument('--background',action='store_true',help='仅显示托盘图标，不自动展开翻译抽屉')
     args=parser.parse_args()
     app=QApplication(sys.argv)
     app.setApplicationName('niri-translate');app.setDesktopFileName(APP_ID)
@@ -600,6 +605,9 @@ def main():
     runtime_dir=runtime_directory()
     lock=QLockFile(str(runtime_dir/'instance.lock'));lock.setStaleLockTime(0)
     if not lock.tryLock(0):
+        # Repeated autostart/background requests must not reveal an existing UI.
+        if args.background:
+            return 0
         connection=QLocalSocket();connection.connectToServer(str(runtime_dir/'instance.sock'))
         if connection.waitForConnected(2000):
             connection.write(b'{"cmd":"show"}\n');connection.waitForBytesWritten(1000);return 0
