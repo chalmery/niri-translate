@@ -529,11 +529,6 @@ ShellRoot {
                             Item {
                                 Layout.fillWidth: true
                             }
-                            UiLabel {
-                                text: "仅在本机处理"
-                                color: shell.muted
-                                font.pixelSize: 12
-                            }
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -700,14 +695,14 @@ ShellRoot {
                             Item {
                                 Layout.fillWidth: true
                             }
-                            UiLabel {
-                                text: "Esc 收起"
-                                color: shell.muted
-                                font.pixelSize: 12
-                            }
                         }
                         UiLabel {
-                            text: shell.data.status || ""
+                            // Keep actionable errors and stop notices; omit idle copy and timing details.
+                            readonly property string notice: shell.data.status || ""
+                            text: shell.data.translating ? "正在翻译…" : notice
+                            visible: !!shell.data.translating || (notice.length > 0
+                                     && notice !== "内容仅在本机处理 · 不保存历史"
+                                     && !notice.startsWith("完成 ·"))
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: shell.muted
@@ -1035,6 +1030,7 @@ ShellRoot {
                         }
                     }
                     Rectangle {
+                        visible: !!shell.data.settings
                         Layout.fillWidth: true
                         implicitHeight: footer.implicitHeight + 20
                         radius: 8
