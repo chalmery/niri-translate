@@ -5,8 +5,9 @@ import urllib.request
 from .storage import Cancelled, model_path, verify
 
 
-def download(model, cancel, progress, opener=None):
-    target = model_path(model)
+def download(model, cancel, progress, opener=None, *, target=None):
+    # Capture the destination before the worker starts; never change it mid-download.
+    target = model_path(model) if target is None else target
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_suffix(".gguf.part")
     url = f'https://huggingface.co/{model["repo"]}/resolve/{model["revision"]}/{model["filename"]}'

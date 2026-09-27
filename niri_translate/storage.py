@@ -32,8 +32,18 @@ def settings():
         return {}
 
 
-def model_path(model):
-    return DATA / "models" / model["filename"]
+def model_directory(config=None):
+    config = settings() if config is None else config
+    configured = config.get('models_dir')
+    if configured:
+        directory = Path(configured).expanduser()
+        if directory.is_absolute():
+            return directory
+    return DATA / 'models'
+
+
+def model_path(model, config=None):
+    return model_directory(config) / model["filename"]
 
 
 class Cancelled(Exception):
@@ -66,3 +76,30 @@ def identify_local(path, cancel, progress=lambda *_: None):
         except ValueError:
             pass
     raise ValueError("仅支持设置中列出的三个官方 GGUF（按大小及 SHA-256 识别）")
+
+
+def model_inventory(config):
+    """Cheap disk snapshot. A matching size never substitutes for load-time SHA-256."""
+    local_paths = config.get('local_paths', {})
+    result = []
+    for model in MODELS:
+        path = Path(local_paths.get(model['id']) or model_path(model, config))
+        part = model_path(model, config).with_suffix('.gguf.part')
+        size = partial = 0
+        state = 'missing'
+        try:
+            if path.is_file():
+                size = path.stat().st_size
+                state = 'present' if size == model['size'] else 'invalid'
+            if part.is_file():
+                partial = part.stat().st_size
+                if state == 'missing':
+                    state = 'partial'
+        except OSError:
+            state = 'unreadable'
+        result.append(dict(id=model['id'], name=model['name'], size=model['size'],
+                           path=str(path), external=path != model_path(model, config),
+                           disk_size=size, partial_size=partial, local_state=state,
+                           label={'present': '已在本地', 'missing': '未下载', 'partial': '下载未完成',
+                                  'invalid': '文件大小异常', 'unreadable': '无法访问'}[state]))
+    return result

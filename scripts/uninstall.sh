@@ -27,4 +27,4 @@ fi
 if [[ " $* " == *" --delete-models "* ]]; then
   rm -rf "$DATA_DIR/models"
 fi
-echo '已卸载。默认保留模型、配置和日志；--purge 删除配置和日志，--delete-models 删除下载的模型。外部本地模型从不删除。'
+echo '已卸载。默认保留模型、配置和日志；--purge 删除配置和日志，--delete-models 仅删除默认目录内的模型。自定义目录与外部本地模型从不删除。'

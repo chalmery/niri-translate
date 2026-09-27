@@ -26,6 +26,9 @@ ShellRoot {
             autostart: false,
             models: []
         })
+    property string directoryDraft: ""
+    property string savedDirectory: ""
+    property int directoryRevision: -1
     property bool applying: false
     property bool sourcePending: false
     property string lastSentSource: ""
@@ -56,6 +59,11 @@ ShellRoot {
             const next = JSON.parse(text);
             applying = true;
             data = next;
+            if (savedDirectory !== next.models_dir || directoryRevision !== Number(next.storage_revision || 0)) {
+                directoryRevision = Number(next.storage_revision || 0);
+                savedDirectory = next.models_dir || "";
+                directoryDraft = savedDirectory;
+            }
             if (!sourcePending || next.source === lastSentSource) {
                 sourcePending = false;
                 if (source.text !== next.source)
@@ -253,23 +261,7 @@ ShellRoot {
                                 text: shell.data.settings ? "返回" : "设置"
                                 onClicked: shell.send("settings", !shell.data.settings)
                             }
-                            ToolButton {
-                                text: "⋯"
-                                Accessible.name: "更多操作"
-                                onClicked: more.open()
-                                Menu {
-                                    id: more
-                                    MenuItem {
-                                        text: "退出客户端"
-                                        onTriggered: shell.send("quit")
-                                    }
-                                }
-                            }
-                            ToolButton {
-                                text: "✕"
-                                Accessible.name: "收起抽屉"
-                                onClicked: shell.send("hide")
-                            }
+
                         }
                     }
                     Rectangle {
@@ -337,6 +329,7 @@ ShellRoot {
                                         anchors.fill: parent
                                         anchors.margins: 4
                                         clip: true
+                                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                                         TextArea {
                                             id: source
                                             width: sourceScroll.availableWidth
@@ -405,6 +398,7 @@ ShellRoot {
                                         anchors.fill: parent
                                         anchors.margins: 4
                                         clip: true
+                                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                                         TextArea {
                                             id: result
                                             width: resultScroll.availableWidth
@@ -489,108 +483,224 @@ ShellRoot {
                         }
                     }
                     ScrollView {
+                        id: settingsScroll
                         visible: !!shell.data.settings
                         Layout.fillHeight: true
                         Layout.fillWidth: true
                         clip: true
                         contentWidth: availableWidth
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                         ColumnLayout {
-                            width: parent.width
-                            spacing: 18
-                            Label {
-                                text: "翻译模型"
-                                font.pixelSize: 18
-                                font.bold: true
-                            }
-                            ComboBox {
+                            width: settingsScroll.availableWidth
+                            spacing: 16
+                            Rectangle {
                                 Layout.fillWidth: true
-                                model: shell.data.models.map(m => m.name + " · " + (m.size / 1e9).toFixed(2) + " GB")
-                                currentIndex: Number(shell.data.model || 0)
-                                onActivated: index => shell.send("model", index)
-                            }
-                            Label {
-                                text: "模型按需下载，同一时间只运行一个。文件大小不等于运行内存。"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: shell.muted
-                            }
-                            ProgressBar {
-                                visible: !!shell.data.model_busy
-                                Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                value: Number(shell.data.progress || 0)
-                            }
-                            Label {
-                                visible: !!shell.data.model_busy
-                                text: Number(shell.data.progress || 0).toFixed(1) + "%"
-                                color: shell.muted
-                            }
-                            RowLayout {
-                                Button {
-                                    text: "下载所选模型"
-                                    enabled: !shell.data.model_busy
-                                    onClicked: shell.send("download")
+                                implicitHeight: computeBody.implicitHeight + 32
+                                radius: 16
+                                color: shell.card
+                                ColumnLayout {
+                                    id: computeBody
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                                    spacing: 8
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Label { text: "计算设备"; font.pixelSize: 18; font.bold: true; color: shell.ink }
+                                        Item { Layout.fillWidth: true }
+                                        ComboBox {
+                                            Layout.preferredWidth: 220
+                                            model: ["自动 · 优先使用 GPU", "仅使用 CPU"]
+                                            currentIndex: shell.data.acceleration === "cpu" ? 1 : 0
+                                            enabled: !shell.data.hardware_busy && !shell.data.model_busy
+                                            onActivated: index => shell.send("acceleration", index === 1 ? "cpu" : "auto")
+                                        }
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: (shell.data.devices || []).length ? shell.data.devices.map(d => d.name + " · " + (d.memory_mib / 1024).toFixed(1) + " GiB 显存").join("\n") : (shell.data.hardware_detail || "正在检测…")
+                                        wrapMode: Text.WrapAnywhere
+                                        color: shell.ink
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "当前运行：" + (shell.data.backend || "尚未加载") + "\n自动模式在 GPU 不可用或加载失败时回退 CPU；切换模式会重新加载模型。"
+                                        color: shell.muted; wrapMode: Text.WordWrap; font.pixelSize: 12
+                                    }
                                 }
-                                Button {
-                                    text: "加载 / 重试"
-                                    enabled: !shell.data.model_busy
-                                    onClicked: shell.send("load")
-                                }
-                                Button {
-                                    text: "取消"
-                                    onClicked: shell.send("cancel_model")
-                                }
-                            }
-                            Button {
-                                text: "选择本地 GGUF…"
-                                enabled: !shell.data.model_busy
-                                onClicked: filePicker.open()
-                            }
-                            Label {
-                                text: "仅支持列表中的三个官方文件，加载前校验 SHA-256。\n不自动下载模型；模型就绪后无需联网。"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: shell.muted
                             }
                             Rectangle {
                                 Layout.fillWidth: true
-                                implicitHeight: 1
-                                color: shell.line
+                                implicitHeight: storageBody.implicitHeight + 32
+                                radius: 16
+                                color: shell.card
+                                ColumnLayout {
+                                    id: storageBody
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                                    spacing: 8
+                                    Label { text: "模型存储位置"; font.pixelSize: 18; font.bold: true; color: shell.ink }
+                                    TextField {
+                                        id: directoryInput
+                                        Layout.fillWidth: true
+                                        text: shell.directoryDraft
+                                        placeholderText: "填写绝对路径，或点击选择文件夹"
+                                        selectByMouse: true
+                                        enabled: !shell.data.model_busy && !shell.data.loading && !shell.data.hardware_busy
+                                        onTextEdited: shell.directoryDraft = text
+                                        onAccepted: if (enabled && text.trim()) shell.send("models_dir", text)
+                                    }
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Button {
+                                            text: "选择文件夹…"
+                                            enabled: directoryInput.enabled
+                                            onClicked: {
+                                                folderPicker.currentFolder = shell.data.models_dir_url || "";
+                                                folderPicker.open();
+                                            }
+                                        }
+                                        Button {
+                                            text: "应用目录"
+                                            enabled: directoryInput.enabled && shell.directoryDraft.trim().length > 0 && shell.directoryDraft !== shell.savedDirectory
+                                            onClicked: shell.send("models_dir", shell.directoryDraft)
+                                        }
+                                        ToolButton { text: "打开当前目录"; onClicked: shell.send("open_storage") }
+                                        ToolButton {
+                                            text: "恢复默认"
+                                            enabled: directoryInput.enabled
+                                            onClicked: shell.directoryDraft = shell.data.default_models_dir
+                                        }
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "当前目录：" + (shell.data.models_dir || "")
+                                        color: shell.muted; font.pixelSize: 12; wrapMode: Text.WrapAnywhere
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "应用后会重新扫描并加载模型，中断正在进行的翻译。已有模型和下载片段不会搬移；可导入旧目录的模型，或切回旧目录继续下载。"
+                                        color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
+                                    }
+                                    Label {
+                                        visible: !!shell.data.storage_status
+                                        Layout.fillWidth: true
+                                        text: shell.data.storage_status || ""
+                                        color: shell.data.storage_error ? (shell.theme.error || shell.muted) : shell.accent
+                                        font.pixelSize: 12; wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label { text: "模型管理"; font.pixelSize: 18; font.bold: true; color: shell.ink }
+                                Item { Layout.fillWidth: true }
+                                ToolButton { text: "刷新本地状态"; onClicked: shell.send("refresh_models") }
                             }
                             Label {
-                                text: "桌面行为"
-                                font.pixelSize: 18
-                                font.bold: true
+                                Layout.fillWidth: true
+                                text: "按需下载，一次运行一个模型。已有文件在加载前会校验完整性。"
+                                color: shell.muted; wrapMode: Text.WordWrap; font.pixelSize: 12
                             }
+                            Repeater {
+                                model: shell.data.models
+                                delegate: Rectangle {
+                                    id: modelCard
+                                    required property var modelData
+                                    required property int index
+                                    readonly property bool selected: index === shell.data.model
+                                    readonly property bool present: modelData.local_state === "present"
+                                    Layout.fillWidth: true
+                                    implicitHeight: modelBody.implicitHeight + 28
+                                    radius: 14
+                                    color: shell.card
+                                    border.color: selected ? shell.accent : shell.outline
+                                    border.width: selected ? 2 : 1
+                                    ColumnLayout {
+                                        id: modelBody
+                                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                                        spacing: 5
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: modelCard.modelData.name
+                                                font.bold: true; color: shell.ink; wrapMode: Text.WordWrap
+                                            }
+                                            Label {
+                                                text: modelCard.selected && shell.data.ready ? "运行中" : modelCard.modelData.label
+                                                color: modelCard.present ? shell.accent : shell.muted
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: (modelCard.modelData.size / 1e9).toFixed(2) + " GB  ·  " + (["推荐日常使用 · 速度与体积均衡", "更高量化精度 · 占用更多内存", "更大模型 · 占用更多内存和显存"][modelCard.index]) + (modelCard.modelData.external ? "  ·  外部文件" : "")
+                                            color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
+                                        }
+                                        TextEdit {
+                                            Layout.fillWidth: true
+                                            text: modelCard.modelData.path
+                                            readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText
+                                            color: shell.muted; font.pixelSize: 11; wrapMode: TextEdit.WrapAnywhere
+                                        }
+                                        Label {
+                                            visible: modelCard.modelData.partial_size > 0
+                                            text: "已下载 " + (modelCard.modelData.partial_size / 1e9).toFixed(2) + " / " + (modelCard.modelData.size / 1e9).toFixed(2) + " GB，可继续下载"
+                                            color: shell.muted; font.pixelSize: 12
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Button {
+                                                text: modelCard.selected && shell.data.model_busy ? "处理中…" : modelCard.selected && shell.data.loading ? "加载中…" : modelCard.selected && shell.data.ready ? "重新加载" : modelCard.present ? "使用此模型" : modelCard.modelData.local_state === "partial" ? "继续下载" : modelCard.modelData.local_state === "invalid" ? "重新下载" : "下载模型"
+                                                enabled: !shell.data.model_busy && !shell.data.hardware_busy && !shell.data.loading
+                                                onClicked: shell.send(modelCard.present ? "model_load" : "model_download", modelCard.index)
+                                            }
+                                            ToolButton { text: "打开目录"; onClicked: shell.send("open_folder", modelCard.index) }
+                                            ToolButton { text: "复制路径"; onClicked: shell.send("copy_path", modelCard.index) }
+                                            Item { Layout.fillWidth: true }
+                                            ToolButton {
+                                                visible: modelCard.selected && (shell.data.model_busy || shell.data.loading)
+                                                text: "取消"; onClicked: shell.send("cancel_model")
+                                            }
+                                        }
+                                        ProgressBar {
+                                            visible: modelCard.selected && shell.data.model_busy
+                                            Layout.fillWidth: true; from: 0; to: 100; value: Number(shell.data.progress || 0)
+                                        }
+                                        Label {
+                                            visible: modelCard.selected && shell.data.model_busy
+                                            Layout.fillWidth: true
+                                            text: (shell.data.model_status || "") + " · " + Number(shell.data.progress || 0).toFixed(1) + "%"
+                                            color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
+                            }
+                            RowLayout {
+                                Button { text: "导入本地 GGUF…"; enabled: !shell.data.model_busy && !shell.data.hardware_busy; onClicked: filePicker.open() }
+                                Label { Layout.fillWidth: true; text: "直接使用原文件，不复制；支持上方三个官方模型。"; color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                            }
+                            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: shell.outline }
+                            Label { text: "桌面与窗口"; font.pixelSize: 18; font.bold: true; color: shell.ink }
                             Switch {
-                                text: "登录桌面后自动启动（仅显示托盘）"
+                                text: "登录后自动启动到托盘"
                                 checked: !!shell.data.autostart
                                 onClicked: shell.send("autostart", checked)
                             }
-                            Label {
-                                text: "抽屉宽度 · " + shell.data.width + " px"
-                                color: shell.muted
-                            }
+                            Label { text: "抽屉宽度 · " + shell.data.width + " px"; color: shell.muted }
                             Slider {
-                                Layout.fillWidth: true
-                                from: 640
-                                to: 1200
-                                stepSize: 20
+                                Layout.fillWidth: true; from: 640; to: 1200; stepSize: 20
                                 value: Number(shell.data.width || 820)
                                 onMoved: shell.send("width", value)
                             }
                             Label {
-                                text: "也可以拖动抽屉左侧边缘调整宽度。\n关闭抽屉会保留文字；退出客户端后清空，不保存翻译历史。"
                                 Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: shell.muted
+                                text: "拖动左边缘也可调整宽度。点击外部或按 Esc 收起。\n收起保留文字，退出后清空；不保存翻译历史。"
+                                color: shell.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
                             }
+                            Button { text: "退出客户端"; onClicked: shell.send("quit") }
                             Label {
-                                text: shell.data.status || ""
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: shell.muted
+                                text: shell.data.status || ""; Layout.fillWidth: true
+                                wrapMode: Text.WordWrap; color: shell.muted; font.pixelSize: 12
                             }
                         }
                     }
@@ -621,6 +731,11 @@ ShellRoot {
                     }
                 }
             }
+        }
+        FolderDialog {
+            id: folderPicker
+            title: "选择模型存储目录"
+            onAccepted: shell.directoryDraft = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""))
         }
         FileDialog {
             id: filePicker

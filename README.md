@@ -1,12 +1,15 @@
 # Niri Translate
 
-适用于 Linux / niri / Wayland 的本地中英文翻译客户端。点击系统托盘图标，从屏幕右侧滑出翻译抽屉；由 CPU 上运行的 Hy-MT2 模型完成翻译。
+适用于 Linux / niri / Wayland 的本地中英文翻译客户端。点击系统托盘图标，从屏幕右侧滑出翻译抽屉；由本机运行的 Hy-MT2 模型完成翻译，自动检测可用 GPU（Vulkan），不可用或加载失败时回退 CPU。
 
 - 原文、译文左右双栏；`Ctrl+Enter` 翻译，流式输出，可停止、复制。
-- 点击抽屉外部、关闭按钮或 `Esc` 收起，内存中保留文字；退出后不保存历史。
+- 点击抽屉外部或 `Esc` 收起，内存中保留文字；退出后不保存历史。
 - 独立的 Wayland layer-shell 面板，不占用 niri 平铺布局；设置在抽屉内。
 - 跟随 **Clavis 的 Material 配色和浅色/深色主题**，文件更新后自动同步，无需重启。
-- 官方 GGUF 按需下载、进度、取消、断点续传、SHA-256 校验、本地文件选择。
+- 模型卡片直接显示本地状态、大小、完整路径；支持打开目录、复制路径、下载续传及导入外部文件。
+- 可选择或填写模型存储目录，校验可写性后保存；支持恢复默认位置。
+- 官方 GGUF 按需下载、进度、取消、断点续传、SHA-256 校验；外部模型关联在切换后保留。
+- 设置中选择自动 GPU / 仅 CPU，显示检测到的显卡、显存和当前运行设备。
 - 单实例、同一时间只运行一个模型；切换先卸载，退出清理推理进程。
 - 登录自启默认关闭；开启后仅显示托盘。
 
@@ -22,7 +25,7 @@
 | PySide6 / Qt Python 组件 | 6.11.2，依赖与哈希见 `requirements.lock` |
 | Quickshell | 0.3.1（本机 RPM `0.3.1-2.fc44`），使用系统 Qt |
 | llama.cpp | v0.5.0，提交 `d2e54583c7452353eb35d40431281f6ee984332f` |
-| 推理配置 | CPU，最多 8 线程，8192 上下文，单 slot |
+| 推理配置 | 自动 GPU / CPU，CPU 最多 8 线程，8192 上下文，单 slot |
 
 界面使用 Quickshell/QML；Python/PySide6 负责托盘、设置、下载及进程管理，通过当前用户私有 Unix socket 与抽屉通信。两个 Qt 版本分属独立进程，不混载动态库。独立于 Clavis 源码，Clavis 只作为配色来源；没有 Clavis 时使用明暗主题后备色。
 
@@ -32,13 +35,15 @@
 
 ```bash
 sudo dnf install python3 uv gcc-c++ cmake ninja-build curl git
+# 可选：Vulkan GPU 构建依赖（还需要适配显卡的 Vulkan 驱动）
+sudo dnf install vulkan-loader-devel glslc spirv-headers-devel
 # quickshell 按其官方 Fedora 安装说明配置软件源后安装。
 git clone https://github.com/chalmery/niri-translate.git
 cd niri-translate
 ./scripts/install.sh
 ```
 
-安装脚本创建专用虚拟环境、校验并编译固定提交的 CPU 运行时，安装图标与 `.desktop` 入口。不会自动下载模型、开启自启或修改 niri/Clavis 配置。
+安装脚本创建专用虚拟环境、校验并编译固定提交的运行时（构建依赖齐全时启用 Vulkan，否则 CPU），安装图标与 `.desktop` 入口。不会自动下载模型、开启自启或修改 niri/Clavis 配置。
 
 从应用菜单搜索 **Niri 本地翻译 / Niri Translate**，或执行：
 
@@ -48,7 +53,7 @@ cd niri-translate
 ~/.local/bin/niri-translate --background
 ```
 
-首次进入抽屉的“设置”，下载默认模型或选择已有官方 GGUF。模型校验和加载期间仍能编辑文本。之后可完全离线翻译。点击托盘图标切换抽屉，右键菜单提供打开、设置、退出。
+首次进入抽屉的“设置”，在模型卡片中下载默认模型或导入已有官方 GGUF。已在本地、未下载、下载未完成和大小异常会分别显示；“已在本地”表示文件存在且大小匹配，加载前仍执行完整 SHA-256 校验。模型校验和加载期间仍能编辑文本。之后可完全离线翻译。点击托盘图标切换抽屉，右键菜单提供打开、设置、退出。
 
 如要配置 niri 快捷键，可自行在已有 `binds` 中加入：
 
@@ -56,7 +61,22 @@ cd niri-translate
 Mod+T { spawn "niri-translate"; }
 ```
 
-不需要浮动窗口规则。抽屉宽度可在设置或通过拖动左边缘调整并记住；高度适应屏幕可用空间。托盘不可用时保留可见抽屉，右上角菜单仍可退出。
+不需要浮动窗口规则。抽屉宽度可在设置或通过拖动左边缘调整并记住；高度适应屏幕可用空间。托盘不可用时保留可见抽屉，设置页面底部仍可退出。
+
+## GPU 加速
+
+运行时通过 `llama-server --list-devices` 检测实际可用的推理设备，过滤软件渲染器，自动优先选择空闲显存最多的 GPU。GPU 模式将所有模型层放到该设备；加载失败或超时会自动重试 CPU 一次。仅 CPU 模式使用 `--device none`，完全禁用 GPU 卸载。GPU 是否更快取决于硬件和输入，设置中可切换对比。
+
+已有 CPU 安装可在安装上述 Vulkan 构建依赖后执行：
+
+```bash
+./scripts/build-runtime.sh
+# 可显式选择构建后端：
+NIRI_TRANSLATE_BACKEND=vulkan ./scripts/build-runtime.sh
+NIRI_TRANSLATE_BACKEND=cpu ./scripts/build-runtime.sh
+```
+
+构建使用动态后端；无兼容 GPU 时仍可使用 CPU。构建完成后重启客户端以重新检测设备。默认模式为自动；设置中的模式选择会保存，切换模式会停止当前翻译并重新加载模型。该版不修改显卡驱动。
 
 ## 模型
 
@@ -73,6 +93,12 @@ Mod+T { spawn "niri-translate"; }
 官方来源：[1.8B GGUF](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF)、[7B GGUF](https://huggingface.co/tencent/Hy-MT2-7B-GGUF)、[llama.cpp](https://github.com/ggml-org/llama.cpp)。运行时已用默认文件验证 `hunyuan-dense`、Q4_K_M 和文件内嵌聊天模板。参数从官方建议起步：temperature 0.7、top_p 0.6、top_k 20、repeat_penalty 1.05，最多生成 4096 tokens。
 
 下载中的文件使用 `.gguf.part`，校验成功后原子改名；失败可重试，未完成文件不会加载。网络断开后保留部分文件；服务端忽略 Range 时安全重下，哈希错误时删除损坏临时文件。
+
+### 自定义模型存储目录
+
+在设置中的“模型存储位置”选择文件夹或填写绝对路径（支持 `~/Models`），点击“应用目录”保存。目录不存在时会尝试创建，并检查写入权限；失败时保留原配置。更改目录会停止当前翻译，重新扫描并加载所选模型；下载、校验、加载过程中暂时不能更改目录。
+
+新下载及 `.gguf.part` 断点文件使用保存后的目录。已有模型和未完成的下载不会自动搬移：可以导入旧目录中的模型，或切回旧目录续传。导入的外部文件始终在原路径使用。“恢复默认”先填入默认位置，点击“应用目录”后生效。
 
 ## 翻译与隐私
 
@@ -104,7 +130,7 @@ Mod+T { spawn "niri-translate"; }
 | 内容 | 目录 |
 | --- | --- |
 | 配置 | `~/.config/niri-translate/` |
-| 模型 | `~/.local/share/niri-translate/models/` |
+| 模型 | 默认 `~/.local/share/niri-translate/models/`，可在设置中修改 |
 | Python 环境/运行时 | `~/.local/share/niri-translate/{venv,runtime}/` |
 | 日志 | `~/.local/state/niri-translate/` |
 | 单实例锁/通信 | `$XDG_RUNTIME_DIR/niri-translate/` |
@@ -115,10 +141,10 @@ Mod+T { spawn "niri-translate"; }
 ```bash
 ./scripts/uninstall.sh                         # 保留模型、配置和日志
 ./scripts/uninstall.sh --purge                 # 另删配置和日志
-./scripts/uninstall.sh --purge --delete-models # 明确选择删除下载的模型
+./scripts/uninstall.sh --purge --delete-models # 明确选择删除默认目录内的模型
 ```
 
-外部选择的本地 GGUF 从不删除。卸载不删除源码仓库；构建缓存 `.build/` 可自行清理。早期本次开发测试添加的 niri 浮动规则已撤回；当前版本不需要任何浮动窗口配置。
+自定义存储目录和外部选择的本地 GGUF 从不删除，需要自行管理。卸载不删除源码仓库；构建缓存 `.build/` 可自行清理。早期本次开发测试添加的 niri 浮动规则已撤回；当前版本不需要任何浮动窗口配置。
 
 ## 开发与验证
 
