@@ -251,7 +251,9 @@ ShellRoot {
             width: select.width
             implicitHeight: Math.min(options.contentHeight + 12, 280)
             padding: 6
-            closePolicy: T.Popup.CloseOnEscape | T.Popup.CloseOnPressOutside
+            // Let ComboBox handle clicks on its own control so an open popup
+            // closes once instead of closing on press and reopening on release.
+            closePolicy: T.Popup.CloseOnEscape | T.Popup.CloseOnPressOutsideParent
             contentItem: ListView {
                 id: options
                 clip: true
